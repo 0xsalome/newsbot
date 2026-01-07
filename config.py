@@ -224,9 +224,9 @@ SOURCE_WEIGHT = {
     "default": 1
 }
 
-# スコア比率
-STRUCTURAL_WEIGHT = 0.7
-TIMELINESS_WEIGHT = 0.3
+# スコア比率（構造 : 話題性 = 50 : 50）
+STRUCTURAL_WEIGHT = 0.5
+TIMELINESS_WEIGHT = 0.5
 
 # 各タグのスコア
 TAG_SCORES = {
