@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "last_updated": null,
+    "retention_days": 7
+  },
+  "posted": {
+    "science": [],
+    "ai": [],
+    "education": [],
+    "mycotech": [],
+    "curiosity": []
+  },
+  "pending": {
+    "science": [],
+    "ai": [],
+    "education": [],
+    "mycotech": [],
+    "curiosity": []
+  }
+}

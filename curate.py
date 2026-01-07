@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""
+News Curation Bot - Main Script
+構造的類似性に基づく自動ニュースキュレーション
+
+Usage:
+    python curate.py              # 通常実行
+    python curate.py --dry-run    # 投稿せずにスコアリング確認
+    python curate.py --category science  # 特定カテゴリのみ
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timedelta
+from urllib.parse import urlparse
+
+import feedparser
+import requests
+
+import config
+
+
+# =============================================================================
+# STATE MANAGEMENT
+# =============================================================================
+
+def load_state(filepath="state.json"):
+    """state.jsonを読み込む"""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return create_initial_state()
+
+
+def save_state(state, filepath="state.json"):
+    """state.jsonを保存する"""
+    state["meta"]["last_updated"] = datetime.utcnow().isoformat() + "Z"
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def create_initial_state():
+    """初期状態を作成"""
+    return {
+        "meta": {
+            "last_updated": None,
+            "retention_days": config.POSTED_RETENTION_DAYS
+        },
+        "posted": {cat: [] for cat in config.CATEGORIES},
+        "pending": {cat: [] for cat in config.CATEGORIES}
+    }
+
+
+def cleanup_old_entries(state):
+    """古いエントリを削除"""
+    now = datetime.utcnow()
+
+    # posted: 7日以上古いものを削除
+    for category in state["posted"]:
+        state["posted"][category] = [
+            entry for entry in state["posted"][category]
+            if _is_within_days(entry.get("posted_at"), config.POSTED_RETENTION_DAYS, now)
+        ]
+
+    # pending: 3日以上古いものを削除
+    for category in state["pending"]:
+        state["pending"][category] = [
+            entry for entry in state["pending"][category]
+            if _is_within_days(entry.get("fetched_at"), config.PENDING_RETENTION_DAYS, now)
+        ]
+
+    return state
+
+
+def _is_within_days(date_str, days, now):
+    """日付が指定日数以内かチェック"""
+    if not date_str:
+        return False
+    try:
+        date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        return (now - date.replace(tzinfo=None)).days <= days
+    except (ValueError, AttributeError):
+        return False
+
+
+# =============================================================================
+# RSS FETCHING
+# =============================================================================
+
+def fetch_rss(url):
+    """RSSフィードを取得"""
+    try:
+        headers = {"User-Agent": config.USER_AGENT}
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return feedparser.parse(response.content)
+    except requests.RequestException as e:
+        print(f"[ERROR] Failed to fetch {url}: {e}")
+        return None
+
+
+def fetch_all_feeds(category):
+    """カテゴリのすべてのRSSフィードを取得"""
+    articles = []
+    sources = config.RSS_SOURCES.get(category, [])
+
+    for url in sources:
+        feed = fetch_rss(url)
+        if feed and feed.entries:
+            for entry in feed.entries:
+                article = parse_feed_entry(entry, url)
+                if article:
+                    articles.append(article)
+        time.sleep(config.REQUEST_INTERVAL_SECONDS)
+
+    return articles
+
+
+def parse_feed_entry(entry, source_url):
+    """RSSエントリを記事オブジェクトに変換"""
+    try:
+        return {
+            "url": entry.get("link", ""),
+            "title": entry.get("title", ""),
+            "summary": entry.get("summary", entry.get("description", "")),
+            "source": urlparse(source_url).netloc,
+            "published": entry.get("published", ""),
+            "fetched_at": datetime.utcnow().isoformat() + "Z",
+            "tags": [],
+            "structural_score": 0,
+            "timeliness_score": 0,
+            "final_score": 0,
+        }
+    except Exception as e:
+        print(f"[ERROR] Failed to parse entry: {e}")
+        return None
+
+
+# =============================================================================
+# TAG DETECTION
+# =============================================================================
+
+def detect_tags(article):
+    """記事にタグを付与"""
+    text = f"{article['title']} {article['summary']}".lower()
+    tags = []
+
+    # transformation
+    score = detect_transformation(text)
+    if score > 0:
+        tags.append({"name": "transformation", "score": score})
+
+    # boundary_crossing
+    score = detect_boundary_crossing(text)
+    if score > 0:
+        tags.append({"name": "boundary_crossing", "score": score})
+
+    # visibility_gain
+    score = detect_visibility_gain(text)
+    if score > 0:
+        tags.append({"name": "visibility_gain", "score": score})
+
+    # value_redefinition
+    score = detect_value_redefinition(text)
+    if score > 0:
+        tags.append({"name": "value_redefinition", "score": score})
+
+    # scale_shift
+    score = detect_scale_shift(text)
+    if score > 0:
+        tags.append({"name": "scale_shift", "score": score})
+
+    # ontology_shift (他タグとの組み合わせでのみ付与)
+    if tags:  # 他のタグがある場合のみチェック
+        score = detect_ontology_shift(text, tags)
+        if score > 0:
+            tags.append({"name": "ontology_shift", "score": score})
+
+    article["tags"] = tags
+    return article
+
+
+def detect_transformation(text):
+    """transformation タグの検出"""
+    score = 0
+
+    # キーワード検出
+    for keyword in config.TRANSFORMATION_KEYWORDS:
+        if keyword in text:
+            score += config.TAG_SCORES["transformation_keyword"]
+
+    # 対義語ペア検出
+    for word1, word2 in config.ANTONYM_PAIRS:
+        if word1 in text and word2 in text:
+            score += config.TAG_SCORES["transformation_antonym_pair"]
+
+    return score
+
+
+def detect_boundary_crossing(text):
+    """boundary_crossing タグの検出"""
+    score = 0
+    detected_domains = []
+
+    # ドメイン検出
+    for domain, keywords in config.DOMAINS.items():
+        for keyword in keywords:
+            if keyword.lower() in text:
+                if domain not in detected_domains:
+                    detected_domains.append(domain)
+                break
+
+    # 2ドメイン以上で検出
+    if len(detected_domains) >= 3:
+        score += config.TAG_SCORES["boundary_crossing_3_domains"]
+    elif len(detected_domains) >= 2:
+        score += config.TAG_SCORES["boundary_crossing_2_domains"]
+
+    # 境界語検出
+    for keyword in config.BOUNDARY_KEYWORDS:
+        if keyword in text:
+            score += config.TAG_SCORES["boundary_crossing_keyword"]
+            break
+
+    return score
+
+
+def detect_visibility_gain(text):
+    """visibility_gain タグの検出"""
+    score = 0
+
+    for keyword in config.VISIBILITY_KEYWORDS:
+        if keyword in text:
+            score += config.TAG_SCORES["visibility_gain_keyword"]
+
+    return min(score, config.TAG_SCORES["visibility_gain_combo"])  # 上限設定
+
+
+def detect_value_redefinition(text):
+    """value_redefinition タグの検出"""
+    score = 0
+
+    for keyword in config.VALUE_KEYWORDS:
+        if keyword in text:
+            score += config.TAG_SCORES["value_redefinition_keyword"]
+
+    for word1, word2 in config.CATEGORY_SHIFT_PAIRS:
+        if word1 in text and word2 in text:
+            score += config.TAG_SCORES["value_redefinition_pair"]
+
+    return score
+
+
+def detect_scale_shift(text):
+    """scale_shift タグの検出"""
+    score = 0
+
+    for word1, word2 in config.SCALE_PAIRS:
+        if word1 in text and word2 in text:
+            score += config.TAG_SCORES["scale_shift_pair"]
+
+    for keyword in config.SCALE_KEYWORDS:
+        if keyword in text:
+            score += config.TAG_SCORES["scale_shift_paradox"]
+            break
+
+    return score
+
+
+def detect_ontology_shift(text, existing_tags):
+    """ontology_shift タグの検出（他タグとの組み合わせでのみ）"""
+    has_ontology_keyword = any(kw in text for kw in config.ONTOLOGY_KEYWORDS)
+    has_questioning = any(kw in text for kw in config.QUESTIONING_KEYWORDS)
+
+    if not has_ontology_keyword:
+        return 0
+
+    # transformation または boundary_crossing と組み合わせ
+    relevant_tags = ["transformation", "boundary_crossing"]
+    has_relevant = any(t["name"] in relevant_tags for t in existing_tags)
+
+    if has_relevant and has_questioning:
+        return config.TAG_SCORES["ontology_shift"]
+
+    return 0
+
+
+# =============================================================================
+# SCORING
+# =============================================================================
+
+def calculate_scores(article):
+    """記事のスコアを計算"""
+    # 構造強度スコア
+    structural_score = sum(tag["score"] for tag in article["tags"])
+
+    # 話題性スコア
+    timeliness_score = calculate_timeliness_score(article)
+
+    # 最終スコア
+    final_score = (
+        structural_score * config.STRUCTURAL_WEIGHT +
+        timeliness_score * config.TIMELINESS_WEIGHT
+    )
+
+    article["structural_score"] = structural_score
+    article["timeliness_score"] = timeliness_score
+    article["final_score"] = round(final_score, 2)
+
+    return article
+
+
+def calculate_timeliness_score(article):
+    """話題性スコアを計算"""
+    score = 0
+
+    # ソース格付け
+    source = article.get("source", "")
+    for domain, weight in config.SOURCE_WEIGHT.items():
+        if domain in source:
+            score += weight
+            break
+    else:
+        score += config.SOURCE_WEIGHT["default"]
+
+    # 鮮度スコア
+    published = article.get("published", "")
+    if published:
+        try:
+            # feedparserの日付形式に対応
+            pub_date = feedparser._parse_date(published)
+            if pub_date:
+                pub_datetime = datetime(*pub_date[:6])
+                age_hours = (datetime.utcnow() - pub_datetime).total_seconds() / 3600
+
+                if age_hours <= 24:
+                    score += 3
+                elif age_hours <= 48:
+                    score += 2
+                elif age_hours <= 168:  # 7 days
+                    score += 1
+        except Exception:
+            pass
+
+    return score
+
+
+# =============================================================================
+# SELECTION LOGIC
+# =============================================================================
+
+def select_articles(articles, state, category):
+    """投稿する記事を選択"""
+    # 重複排除（既に投稿済みのURL）
+    posted_urls = {entry["url"] for entry in state["posted"].get(category, [])}
+    new_articles = [a for a in articles if a["url"] not in posted_urls]
+
+    # pending記事とマージ
+    pending = state["pending"].get(category, [])
+    all_candidates = new_articles + pending
+
+    # スコアでソート
+    sorted_articles = sorted(all_candidates, key=lambda x: x.get("final_score", 0), reverse=True)
+
+    # タグ多様性チェック
+    selected = ensure_tag_diversity(sorted_articles)
+
+    return selected[:config.POSTS_PER_DAY]
+
+
+def ensure_tag_diversity(articles):
+    """タグの多様性を確保"""
+    if len(articles) < 2:
+        return articles
+
+    top2 = articles[:2]
+    tags1 = {t["name"] for t in top2[0].get("tags", [])}
+    tags2 = {t["name"] for t in top2[1].get("tags", [])}
+
+    # 同じタグセットなら3位以降から異なるものを探す
+    if tags1 == tags2:
+        for article in articles[2:10]:
+            article_tags = {t["name"] for t in article.get("tags", [])}
+            if article_tags != tags1:
+                return [top2[0], article]
+
+    return top2
+
+
+def update_pending(articles, selected, state, category):
+    """pending記事を更新"""
+    selected_urls = {a["url"] for a in selected}
+
+    # 選択されなかった上位記事をpendingに
+    pending = [a for a in articles if a["url"] not in selected_urls][:8]
+    state["pending"][category] = pending
+
+    return state
+
+
+# =============================================================================
+# DISCORD POSTING
+# =============================================================================
+
+def post_to_discord(article, category, dry_run=False):
+    """Discordに投稿"""
+    webhook_env = f"DISCORD_WEBHOOK_{category.upper()}"
+    webhook_url = os.environ.get(webhook_env)
+
+    if not webhook_url:
+        print(f"[WARN] {webhook_env} not set, skipping post")
+        return False
+
+    # メッセージ作成
+    cat_info = config.CATEGORIES[category]
+    tag_names = " × ".join(t["name"] for t in article["tags"]) if article["tags"] else "no tags"
+    date_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    message = f"""{cat_info['emoji']} **{cat_info['name']}** | {date_str}
+
+**[{tag_names}]**
+{article['title']}
+
+🔗 {article['url']}
+📰 {article['source']} | Score: {article['final_score']}"""
+
+    if dry_run:
+        print(f"\n[DRY-RUN] Would post to {category}:")
+        print(message)
+        print("-" * 50)
+        return True
+
+    # 実際に投稿
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"content": message},
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        response.raise_for_status()
+        print(f"[OK] Posted to {category}: {article['title'][:50]}...")
+        return True
+    except requests.RequestException as e:
+        print(f"[ERROR] Failed to post to Discord: {e}")
+        return False
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def process_category(category, state, dry_run=False):
+    """1カテゴリを処理"""
+    print(f"\n{'='*50}")
+    print(f"Processing: {category}")
+    print(f"{'='*50}")
+
+    # RSS取得
+    articles = fetch_all_feeds(category)
+    print(f"Fetched {len(articles)} articles")
+
+    if not articles:
+        return state
+
+    # タグ付与とスコアリング
+    for article in articles:
+        detect_tags(article)
+        calculate_scores(article)
+
+    # フィルタリング（タグがない記事は除外）
+    tagged_articles = [a for a in articles if a["tags"]]
+    print(f"Tagged articles: {len(tagged_articles)}")
+
+    # 記事選択
+    selected = select_articles(tagged_articles, state, category)
+    print(f"Selected {len(selected)} articles for posting")
+
+    # 投稿
+    for article in selected:
+        if post_to_discord(article, category, dry_run):
+            # 投稿成功したらpostedに追加
+            if not dry_run:
+                state["posted"][category].append({
+                    "url": article["url"],
+                    "posted_at": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "score": article["final_score"],
+                    "tags": [t["name"] for t in article["tags"]]
+                })
+
+    # pending更新
+    state = update_pending(tagged_articles, selected, state, category)
+
+    return state
+
+
+def main():
+    parser = argparse.ArgumentParser(description="News Curation Bot")
+    parser.add_argument("--dry-run", action="store_true", help="Don't actually post")
+    parser.add_argument("--category", type=str, help="Process specific category only")
+    args = parser.parse_args()
+
+    print("News Curation Bot starting...")
+    print(f"Dry run: {args.dry_run}")
+
+    # 状態読み込み
+    state = load_state()
+    state = cleanup_old_entries(state)
+
+    # カテゴリ処理
+    categories = [args.category] if args.category else list(config.CATEGORIES.keys())
+
+    for category in categories:
+        if category not in config.CATEGORIES:
+            print(f"[ERROR] Unknown category: {category}")
+            continue
+        state = process_category(category, state, args.dry_run)
+
+    # 状態保存
+    if not args.dry_run:
+        save_state(state)
+        print("\nState saved.")
+
+    print("\nDone!")
+
+
+if __name__ == "__main__":
+    main()
