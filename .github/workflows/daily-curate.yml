@@ -41,3 +41,4 @@ jobs:
           git add state.json
           git diff --staged --quiet || git commit -m "Update state.json [skip ci]"
           git push
+
