@@ -142,6 +142,50 @@ def parse_feed_entry(entry, source_url):
 
 
 # =============================================================================
+# TRANSLATION (DeepL API Free)
+# =============================================================================
+
+def translate_to_japanese(text):
+    """DeepL APIで日本語に翻訳"""
+    api_key = os.environ.get("DEEPL_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        response = requests.post(
+            "https://api-free.deepl.com/v2/translate",
+            data={
+                "auth_key": api_key,
+                "text": text,
+                "target_lang": "JA"
+            },
+            timeout=10
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result["translations"][0]["text"]
+    except Exception as e:
+        print(f"[WARN] Translation failed: {e}")
+        return None
+
+
+def translate_articles(articles):
+    """記事のタイトルを日本語に翻訳"""
+    api_key = os.environ.get("DEEPL_API_KEY")
+    if not api_key:
+        print("[INFO] DEEPL_API_KEY not set, skipping translation")
+        return articles
+
+    print(f"Translating {len(articles)} article titles...")
+    for article in articles:
+        title_ja = translate_to_japanese(article["title"])
+        article["title_ja"] = title_ja if title_ja else article["title"]
+        time.sleep(0.1)  # Rate limit対策
+
+    return articles
+
+
+# =============================================================================
 # TAG DETECTION
 # =============================================================================
 
@@ -412,19 +456,18 @@ def post_to_discord(article, category, dry_run=False):
     webhook_env = f"DISCORD_WEBHOOK_{category.upper()}"
     webhook_url = os.environ.get(webhook_env)
 
-    if not webhook_url:
-        print(f"[WARN] {webhook_env} not set, skipping post")
-        return False
-
-    # メッセージ作成
+    # メッセージ作成（dry-run時も表示するため先に作成）
     cat_info = config.CATEGORIES[category]
     tag_names = " × ".join(t["name"] for t in article["tags"]) if article["tags"] else "no tags"
     date_str = datetime.utcnow().strftime("%Y-%m-%d")
 
+    # 日本語タイトルがあれば使用
+    title = article.get('title_ja', article['title'])
+
     message = f"""{cat_info['emoji']} **{cat_info['name']}** | {date_str}
 
 **[{tag_names}]**
-{article['title']}
+{title}
 
 🔗 {article['url']}
 📰 {article['source']} | Score: {article['final_score']}"""
@@ -434,6 +477,11 @@ def post_to_discord(article, category, dry_run=False):
         print(message)
         print("-" * 50)
         return True
+
+    # Webhook URLチェック（実投稿時のみ）
+    if not webhook_url:
+        print(f"[WARN] {webhook_env} not set, skipping post")
+        return False
 
     # 実際に投稿
     try:
@@ -480,6 +528,9 @@ def process_category(category, state, dry_run=False):
     # 記事選択
     selected = select_articles(tagged_articles, state, category)
     print(f"Selected {len(selected)} articles for posting")
+
+    # 選択された記事のみ翻訳（API節約）
+    selected = translate_articles(selected)
 
     # 投稿
     for article in selected:

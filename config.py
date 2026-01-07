@@ -44,7 +44,7 @@ RSS_SOURCES = {
         "https://www.nature.com/nature.rss",
         "https://www.sciencedaily.com/rss/all.xml",
         "https://phys.org/rss-feed/",
-        "https://www.eurekalert.org/rss/news_releases.xml",
+        "https://www.newscientist.com/feed/home/",
     ],
     "ai": [
         "https://news.ycombinator.com/rss",
