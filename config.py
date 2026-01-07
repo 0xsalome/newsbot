@@ -41,16 +41,17 @@ CATEGORIES = {
 
 RSS_SOURCES = {
     "science": [
-        "https://www.nature.com/nature.rss",
         "https://www.sciencedaily.com/rss/all.xml",
         "https://phys.org/rss-feed/",
-        "https://www.newscientist.com/feed/home/",
+        "https://www.eurekalert.org/rss/news_releases.xml",
+        "https://arxiv.org/rss/cs",      # arXiv - コンピュータサイエンス
+        "https://arxiv.org/rss/q-bio",   # arXiv - 生物学
     ],
     "ai": [
         "https://news.ycombinator.com/rss",
-        "https://www.technologyreview.com/feed/",
         "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
         "https://venturebeat.com/category/ai/feed/",
+        "https://techcrunch.com/category/artificial-intelligence/feed/",
     ],
     "education": [
         "https://www.edsurge.com/news.rss",
@@ -60,8 +61,8 @@ RSS_SOURCES = {
     "mycotech": [
         "https://phys.org/rss-feed/biology-news/",
         "https://news.ycombinator.com/rss",
-        "https://www.sciencedaily.com/rss/plants_animals/mycology.xml",
         "https://www.anthropocenemagazine.org/feed/",
+        "https://www.sciencedaily.com/rss/plants_animals.xml",
     ],
     "curiosity": [
         "https://www.atlasobscura.com/feeds/latest",
