@@ -425,14 +425,21 @@ def calculate_timeliness_score(article):
 
 def select_articles(articles, state, category):
     """カテゴリ設定に基づいて記事を選出"""
-    # 重複排除（既に投稿済みのURL）
-    posted_urls = {entry["url"] for entry in state["posted"].get(category, [])}
-    new_articles = [a for a in articles if a["url"] not in posted_urls]
+    # 1. すべての候補をURLでユニークにする（複数のRSSフィードからの重複を排除）
+    unique_candidates_map = {}
+    for a in articles:
+        if a["url"] not in unique_candidates_map:
+            unique_candidates_map[a["url"]] = a
     
-    # pending記事とマージ
+    # 2. 既に投稿済みのURLを除外
+    posted_urls = {entry["url"] for entry in state["posted"].get(category, [])}
+    new_articles = [a for url, a in unique_candidates_map.items() if url not in posted_urls]
+    
+    # 3. pending記事とマージ（ここでもURL重複を排除）
     pending = state["pending"].get(category, [])
-    # pending記事も再度スコアリングするために一旦リストを統合
-    all_candidates = new_articles + pending
+    # すでにnew_articlesにあるものはpendingから除外（最新版を優先）
+    new_urls = {a["url"] for a in new_articles}
+    all_candidates = new_articles + [p for p in pending if p["url"] not in new_urls]
 
     cat_config = config.CATEGORIES[category]
     mode = cat_config["selection_mode"]
