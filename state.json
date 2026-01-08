@@ -418,51 +418,6 @@
           "boundary_crossing",
           "visibility_gain"
         ]
-      },
-      {
-        "url": "https://github.com/marcelscruz/public-apis",
-        "posted_at": "2026-01-08",
-        "score": 28.3,
-        "tags": [
-          "transformation",
-          "boundary_crossing",
-          "visibility_gain",
-          "value_redefinition",
-          "scale_shift"
-        ]
-      },
-      {
-        "url": "https://github.com/Lissy93/web-check",
-        "posted_at": "2026-01-08",
-        "score": 9.7,
-        "tags": [
-          "boundary_crossing",
-          "visibility_gain",
-          "scale_shift",
-          "ontology_shift"
-        ]
-      },
-      {
-        "url": "https://github.com/microsoft/PowerToys",
-        "posted_at": "2026-01-08",
-        "score": 17.8,
-        "tags": [
-          "transformation",
-          "boundary_crossing",
-          "visibility_gain",
-          "scale_shift"
-        ]
-      },
-      {
-        "url": "https://github.com/DrewThomasson/ebook2audiobook",
-        "posted_at": "2026-01-08",
-        "score": 7.3,
-        "tags": [
-          "boundary_crossing",
-          "visibility_gain",
-          "scale_shift",
-          "ontology_shift"
-        ]
       }
     ],
     "curiosity": [
