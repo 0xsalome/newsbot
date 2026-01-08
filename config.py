@@ -79,11 +79,8 @@ RSS_SOURCES = {
     "bigtech": [
         # グローバルテックメディア
         "https://techcrunch.com/feed/",
-        "https://www.theverge.com/rss/index.xml",
         "https://www.wired.com/feed/rss",
         "https://arstechnica.com/feed/",
-        "https://www.engadget.com/rss.xml",
-        "https://mashable.com/feeds/rss/all",
         # 中国テック（英語版）
         "https://www.scmp.com/rss/91/feed",
         "https://kr-asia.com/feed",
@@ -173,8 +170,6 @@ RSS_SOURCES = {
         "https://grist.org/feed/",
         "https://therevelator.org/feed/",
         # テックトレンド
-        "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
-        "https://news.ycombinator.com/rss",
         "https://www.reddit.com/r/biology/.rss",
     ],
     "curiosity": [
