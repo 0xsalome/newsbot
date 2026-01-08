@@ -32,7 +32,14 @@ def load_state(filepath="state.json"):
     """state.jsonを読み込む"""
     try:
         with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
+            state = json.load(f)
+            # 新規カテゴリの初期化
+            for category in config.CATEGORIES:
+                if category not in state["posted"]:
+                    state["posted"][category] = []
+                if category not in state["pending"]:
+                    state["pending"][category] = []
+            return state
     except FileNotFoundError:
         return create_initial_state()
 
@@ -185,13 +192,21 @@ def translate_articles(articles):
     return articles
 
 
+def strip_html(text):
+    """HTMLタグを除去"""
+    return re.sub(r'<[^>]+>', '', text)
+
+
 # =============================================================================
 # TAG DETECTION
 # =============================================================================
 
 def detect_tags(article):
     """記事にタグを付与"""
-    text = f"{article['title']} {article['summary']}".lower()
+    # HTML除去と正規化
+    raw_text = f"{article['title']} {article['summary']}"
+    text = strip_html(raw_text).lower()
+    
     tags = []
 
     # transformation
@@ -229,18 +244,31 @@ def detect_tags(article):
     return article
 
 
+def count_matches(text, keywords):
+    """キーワードの出現回数をカウント（単語境界を考慮）"""
+    count = 0
+    for keyword in keywords:
+        # エスケープ処理（キーワードに記号が含まれる場合用）
+        pattern = r'\b' + re.escape(keyword) + r'\b'
+        if re.search(pattern, text):
+            count += 1
+    return count
+
+
 def detect_transformation(text):
     """transformation タグの検出"""
     score = 0
 
     # キーワード検出
-    for keyword in config.TRANSFORMATION_KEYWORDS:
-        if keyword in text:
-            score += config.TAG_SCORES["transformation_keyword"]
+    matches = count_matches(text, config.TRANSFORMATION_KEYWORDS)
+    if matches > 0:
+        score += config.TAG_SCORES["transformation_keyword"] * matches
 
     # 対義語ペア検出
     for word1, word2 in config.ANTONYM_PAIRS:
-        if word1 in text and word2 in text:
+        pattern1 = r'\b' + re.escape(word1) + r'\b'
+        pattern2 = r'\b' + re.escape(word2) + r'\b'
+        if re.search(pattern1, text) and re.search(pattern2, text):
             score += config.TAG_SCORES["transformation_antonym_pair"]
 
     return score
@@ -253,11 +281,8 @@ def detect_boundary_crossing(text):
 
     # ドメイン検出
     for domain, keywords in config.DOMAINS.items():
-        for keyword in keywords:
-            if keyword.lower() in text:
-                if domain not in detected_domains:
-                    detected_domains.append(domain)
-                break
+        if count_matches(text, keywords) > 0:
+            detected_domains.append(domain)
 
     # 2ドメイン以上で検出
     if len(detected_domains) >= 3:
@@ -266,10 +291,8 @@ def detect_boundary_crossing(text):
         score += config.TAG_SCORES["boundary_crossing_2_domains"]
 
     # 境界語検出
-    for keyword in config.BOUNDARY_KEYWORDS:
-        if keyword in text:
-            score += config.TAG_SCORES["boundary_crossing_keyword"]
-            break
+    if count_matches(text, config.BOUNDARY_KEYWORDS) > 0:
+        score += config.TAG_SCORES["boundary_crossing_keyword"]
 
     return score
 
@@ -277,10 +300,10 @@ def detect_boundary_crossing(text):
 def detect_visibility_gain(text):
     """visibility_gain タグの検出"""
     score = 0
-
-    for keyword in config.VISIBILITY_KEYWORDS:
-        if keyword in text:
-            score += config.TAG_SCORES["visibility_gain_keyword"]
+    
+    matches = count_matches(text, config.VISIBILITY_KEYWORDS)
+    if matches > 0:
+        score += config.TAG_SCORES["visibility_gain_keyword"] * matches
 
     return min(score, config.TAG_SCORES["visibility_gain_combo"])  # 上限設定
 
@@ -289,12 +312,14 @@ def detect_value_redefinition(text):
     """value_redefinition タグの検出"""
     score = 0
 
-    for keyword in config.VALUE_KEYWORDS:
-        if keyword in text:
-            score += config.TAG_SCORES["value_redefinition_keyword"]
+    matches = count_matches(text, config.VALUE_KEYWORDS)
+    if matches > 0:
+        score += config.TAG_SCORES["value_redefinition_keyword"] * matches
 
     for word1, word2 in config.CATEGORY_SHIFT_PAIRS:
-        if word1 in text and word2 in text:
+        pattern1 = r'\b' + re.escape(word1) + r'\b'
+        pattern2 = r'\b' + re.escape(word2) + r'\b'
+        if re.search(pattern1, text) and re.search(pattern2, text):
             score += config.TAG_SCORES["value_redefinition_pair"]
 
     return score
@@ -305,21 +330,22 @@ def detect_scale_shift(text):
     score = 0
 
     for word1, word2 in config.SCALE_PAIRS:
-        if word1 in text and word2 in text:
+        pattern1 = r'\b' + re.escape(word1) + r'\b'
+        pattern2 = r'\b' + re.escape(word2) + r'\b'
+        if re.search(pattern1, text) and re.search(pattern2, text):
             score += config.TAG_SCORES["scale_shift_pair"]
 
-    for keyword in config.SCALE_KEYWORDS:
-        if keyword in text:
-            score += config.TAG_SCORES["scale_shift_paradox"]
-            break
+    matches = count_matches(text, config.SCALE_KEYWORDS)
+    if matches > 0:
+        score += config.TAG_SCORES["scale_shift_paradox"]
 
     return score
 
 
 def detect_ontology_shift(text, existing_tags):
     """ontology_shift タグの検出（他タグとの組み合わせでのみ）"""
-    has_ontology_keyword = any(kw in text for kw in config.ONTOLOGY_KEYWORDS)
-    has_questioning = any(kw in text for kw in config.QUESTIONING_KEYWORDS)
+    has_ontology_keyword = count_matches(text, config.ONTOLOGY_KEYWORDS) > 0
+    has_questioning = count_matches(text, config.QUESTIONING_KEYWORDS) > 0
 
     if not has_ontology_keyword:
         return 0
@@ -338,26 +364,25 @@ def detect_ontology_shift(text, existing_tags):
 # SCORING
 # =============================================================================
 
-def calculate_scores(article):
-    """記事のスコアを計算"""
+def calculate_base_scores(article):
+    """記事の基本スコア（構造・話題性）を計算"""
     # 構造強度スコア
     structural_score = sum(tag["score"] for tag in article["tags"])
 
     # 話題性スコア
     timeliness_score = calculate_timeliness_score(article)
 
-    # 最終スコア
-    final_score = (
-        structural_score * config.STRUCTURAL_WEIGHT +
-        timeliness_score * config.TIMELINESS_WEIGHT
-    )
-
     article["structural_score"] = structural_score
     article["timeliness_score"] = timeliness_score
-    article["final_score"] = round(final_score, 2)
-
     return article
 
+def calculate_weighted_score(article, weights):
+    """指定された重みで最終スコアを計算"""
+    final_score = (
+        article["structural_score"] * weights["structural"] +
+        article["timeliness_score"] * weights["timeliness"]
+    )
+    return final_score
 
 def calculate_timeliness_score(article):
     """話題性スコアを計算"""
@@ -399,50 +424,138 @@ def calculate_timeliness_score(article):
 # =============================================================================
 
 def select_articles(articles, state, category):
-    """投稿する記事を選択"""
+    """カテゴリ設定に基づいて記事を選出"""
     # 重複排除（既に投稿済みのURL）
     posted_urls = {entry["url"] for entry in state["posted"].get(category, [])}
     new_articles = [a for a in articles if a["url"] not in posted_urls]
-
+    
     # pending記事とマージ
     pending = state["pending"].get(category, [])
+    # pending記事も再度スコアリングするために一旦リストを統合
     all_candidates = new_articles + pending
 
-    # スコアでソート
-    sorted_articles = sorted(all_candidates, key=lambda x: x.get("final_score", 0), reverse=True)
+    cat_config = config.CATEGORIES[category]
+    mode = cat_config["selection_mode"]
+    
+    selected = []
 
-    # タグ多様性チェック
-    selected = ensure_tag_diversity(sorted_articles)
+    if mode == "trending_only":
+        # 話題性重視のみ (BigTech, DevCommunity)
+        weights = cat_config["weights"]
+        for a in all_candidates:
+            a["final_score"] = round(calculate_weighted_score(a, weights), 2)
+        
+        sorted_articles = sorted(all_candidates, key=lambda x: x["final_score"], reverse=True)
+        selected = sorted_articles[:cat_config["posts_per_day"]]
 
-    return selected[:config.POSTS_PER_DAY]
+    elif mode == "dual":
+        # 構造重視1 + 話題重視1 (Science, Education, Mycotech, Curiosity)
+        
+        # 1. 構造重視で選出
+        weights_struct = cat_config["weights_structural"]
+        for a in all_candidates:
+            a["temp_score_struct"] = calculate_weighted_score(a, weights_struct)
+        
+        sorted_struct = sorted(all_candidates, key=lambda x: x["temp_score_struct"], reverse=True)
+        # タグがあるもののみ対象
+        struct_candidates = [a for a in sorted_struct if a["tags"]]
+        top_structural = struct_candidates[:1]
+        
+        # 2. 残りから話題重視で選出
+        weights_trend = cat_config["weights_trending"]
+        remaining = [a for a in all_candidates if a not in top_structural]
+        
+        for a in remaining:
+            a["temp_score_trend"] = calculate_weighted_score(a, weights_trend)
+            
+        sorted_trend = sorted(remaining, key=lambda x: x["temp_score_trend"], reverse=True)
+        top_trending = sorted_trend[:1]
+        
+        # 統合
+        selected = top_structural + top_trending
+        
+        # final_scoreを選択された基準に合わせて更新（表示用）
+        for a in top_structural:
+            a["final_score"] = round(a["temp_score_struct"], 2)
+        for a in top_trending:
+            a["final_score"] = round(a["temp_score_trend"], 2)
 
 
-def ensure_tag_diversity(articles):
-    """タグの多様性を確保"""
-    if len(articles) < 2:
-        return articles
+    elif mode == "dual_enhanced":
+        # 構造重視2 + 話題重視2 (AI)
+        
+        # 1. 構造重視で選出
+        weights_struct = cat_config["weights_structural"]
+        for a in all_candidates:
+            a["temp_score_struct"] = calculate_weighted_score(a, weights_struct)
+        
+        sorted_struct = sorted(all_candidates, key=lambda x: x["temp_score_struct"], reverse=True)
+        struct_candidates = [a for a in sorted_struct if a["tags"]]
+        top_structural = struct_candidates[:2]
+        
+        # タグ多様性チェック（構造重視枠内）
+        top_structural = ensure_tag_diversity(top_structural, struct_candidates)
 
-    top2 = articles[:2]
-    tags1 = {t["name"] for t in top2[0].get("tags", [])}
-    tags2 = {t["name"] for t in top2[1].get("tags", [])}
+        # 2. 残りから話題重視で選出
+        weights_trend = cat_config["weights_trending"]
+        remaining = [a for a in all_candidates if a not in top_structural]
+        
+        for a in remaining:
+            a["temp_score_trend"] = calculate_weighted_score(a, weights_trend)
+            
+        sorted_trend = sorted(remaining, key=lambda x: x["temp_score_trend"], reverse=True)
+        top_trending = sorted_trend[:2]
+        
+        # 統合
+        selected = top_structural + top_trending
 
-    # 同じタグセットなら3位以降から異なるものを探す
-    if tags1 == tags2:
-        for article in articles[2:10]:
+        # final_score更新
+        for a in top_structural:
+            a["final_score"] = round(a["temp_score_struct"], 2)
+        for a in top_trending:
+            a["final_score"] = round(a["temp_score_trend"], 2)
+
+    return selected
+
+
+def ensure_tag_diversity(current_top, candidates):
+    """タグの多様性を確保（構造重視枠用）"""
+    if len(current_top) < 2:
+        return current_top
+
+    top1 = current_top[0]
+    top2 = current_top[1]
+    
+    tags1 = {t["name"] for t in top1.get("tags", [])}
+    tags2 = {t["name"] for t in top2.get("tags", [])}
+
+    # 同じタグセットなら、候補リストの3番目以降から異なるタグを持つものを探す
+    if tags1 == tags2 and len(candidates) > 2:
+        for article in candidates[2:10]:  # 上位10件まで探索
             article_tags = {t["name"] for t in article.get("tags", [])}
             if article_tags != tags1:
-                return [top2[0], article]
+                return [top1, article]
 
-    return top2
+    return current_top
 
 
 def update_pending(articles, selected, state, category):
     """pending記事を更新"""
     selected_urls = {a["url"] for a in selected}
+    
+    # 選択されなかった記事
+    remaining = [a for a in articles if a["url"] not in selected_urls]
+    
+    # 簡易スコア（デフォルトウェイト）でソートして上位を保持
+    # ※ 次回実行時に適切なモードで再計算されるため、ここでは暫定的に保持
+    default_weights = {"structural": 0.5, "timeliness": 0.5}
+    for a in remaining:
+        if "final_score" not in a or a["final_score"] == 0:
+             a["final_score"] = calculate_weighted_score(a, default_weights)
 
-    # 選択されなかった上位記事をpendingに
-    pending = [a for a in articles if a["url"] not in selected_urls][:8]
-    state["pending"][category] = pending
+    sorted_pending = sorted(remaining, key=lambda x: x.get("final_score", 0), reverse=True)
+    
+    state["pending"][category] = sorted_pending[:10]  # 上位10件保持
 
     return state
 
@@ -516,17 +629,13 @@ def process_category(category, state, dry_run=False):
     if not articles:
         return state
 
-    # タグ付与とスコアリング
+    # タグ付与と基本スコア計算
     for article in articles:
         detect_tags(article)
-        calculate_scores(article)
+        calculate_base_scores(article)
 
-    # フィルタリング（タグがない記事は除外）
-    tagged_articles = [a for a in articles if a["tags"]]
-    print(f"Tagged articles: {len(tagged_articles)}")
-
-    # 記事選択
-    selected = select_articles(tagged_articles, state, category)
+    # 記事選択（カテゴリごとのロジックで）
+    selected = select_articles(articles, state, category)
     print(f"Selected {len(selected)} articles for posting")
 
     # 選択された記事のみ翻訳（API節約）
@@ -545,7 +654,8 @@ def process_category(category, state, dry_run=False):
                 })
 
     # pending更新
-    state = update_pending(tagged_articles, selected, state, category)
+    # selectedに入らなかった記事の中からpending候補を選ぶ
+    state = update_pending(articles, selected, state, category)
 
     return state
 

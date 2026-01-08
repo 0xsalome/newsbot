@@ -8,30 +8,66 @@ News Curation Bot - Configuration
 # =============================================================================
 
 CATEGORIES = {
-    "science": {
-        "name": "Science",
-        "emoji": "🔬",
-        "description": "観測可能性の拡張、理論と実証"
+    "bigtech": {
+        "name": "Big Tech",
+        "emoji": "🏢",
+        "description": "グローバルテック、トレンド、ビジネス",
+        "posts_per_day": 2,
+        "selection_mode": "trending_only",  # 話題性のみ
+        "weights": {"structural": 0.3, "timeliness": 0.7}
+    },
+    "devcommunity": {
+        "name": "Dev Community",
+        "emoji": "💬",
+        "description": "開発者議論、トレンド、実践知",
+        "posts_per_day": 2,
+        "selection_mode": "trending_only",
+        "weights": {"structural": 0.3, "timeliness": 0.7}
     },
     "ai": {
         "name": "AI",
         "emoji": "🤖",
-        "description": "境界侵犯、人間観の揺らぎ"
+        "description": "境界侵犯、人間観の揺らぎ",
+        "posts_per_day": 4,
+        "selection_mode": "dual_enhanced",  # 構造2 + 話題2
+        "weights_structural": {"structural": 0.8, "timeliness": 0.2},
+        "weights_trending": {"structural": 0.2, "timeliness": 0.8}
+    },
+    "science": {
+        "name": "Science",
+        "emoji": "🔬",
+        "description": "観測可能性の拡張、理論と実証",
+        "posts_per_day": 2,
+        "selection_mode": "dual",  # 構造1 + 話題1
+        "weights_structural": {"structural": 0.7, "timeliness": 0.3},
+        "weights_trending": {"structural": 0.3, "timeliness": 0.7}
     },
     "education": {
         "name": "Education",
         "emoji": "📚",
-        "description": "価値の再定義、評価軸の移動"
+        "description": "価値の再定義、評価軸の移動",
+        "posts_per_day": 2,
+        "selection_mode": "dual",
+        "weights_structural": {"structural": 0.7, "timeliness": 0.3},
+        "weights_trending": {"structural": 0.3, "timeliness": 0.7}
     },
     "mycotech": {
         "name": "Mycotech",
         "emoji": "🍄",
-        "description": "生物×機械、境界侵犯の象徴領域"
+        "description": "生物×機械、境界侵犯の象徴領域",
+        "posts_per_day": 2,
+        "selection_mode": "dual",
+        "weights_structural": {"structural": 0.7, "timeliness": 0.3},
+        "weights_trending": {"structural": 0.3, "timeliness": 0.7}
     },
     "curiosity": {
         "name": "Curiosity",
         "emoji": "🌍",
-        "description": "スケール錯誤、本来そこにないもの"
+        "description": "スケール錯誤、本来そこにないもの",
+        "posts_per_day": 2,
+        "selection_mode": "dual",
+        "weights_structural": {"structural": 0.7, "timeliness": 0.3},
+        "weights_trending": {"structural": 0.3, "timeliness": 0.7}
     }
 }
 
@@ -40,35 +76,123 @@ CATEGORIES = {
 # =============================================================================
 
 RSS_SOURCES = {
-    "science": [
-        "https://www.sciencedaily.com/rss/all.xml",
-        "https://phys.org/rss-feed/",
-        "https://www.eurekalert.org/rss/news_releases.xml",
-        "https://arxiv.org/rss/cs",      # arXiv - コンピュータサイエンス
-        "https://arxiv.org/rss/q-bio",   # arXiv - 生物学
+    "bigtech": [
+        # グローバルテックメディア
+        "https://techcrunch.com/feed/",
+        "https://www.theverge.com/rss/index.xml",
+        "https://www.wired.com/feed/rss",
+        "https://arstechnica.com/feed/",
+        "https://www.engadget.com/rss.xml",
+        "https://mashable.com/feeds/rss/all",
+        # 中国テック（英語版）
+        "https://www.scmp.com/rss/91/feed",
+        "https://kr-asia.com/feed",
+        "https://technode.com/feed/",
+        "https://pandaily.com/feed/",
+        # トレンド
+        "https://news.ycombinator.com/rss",
+        "https://www.producthunt.com/feed",
+    ],
+    "devcommunity": [
+        # GitHub
+        "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+        "https://mshibanami.github.io/GitHubTrendingRSS/weekly/all.xml",
+        # 議論プラットフォーム
+        "https://news.ycombinator.com/rss",
+        "https://lobste.rs/rss",
+        "https://www.reddit.com/r/programming/.rss",
+        "https://www.reddit.com/r/compsci/.rss",
+        "https://www.reddit.com/r/webdev/.rss",
+        "https://www.reddit.com/r/devops/.rss",
+        # 開発者ブログ
+        "https://dev.to/feed",
+        "https://hashnode.com/rss",
+        "https://daily.dev/blog/feed",
+        # 実践知
+        "https://www.indiehackers.com/feed",
+        "https://increment.com/feed.xml",
+        # 日本語
+        "https://qiita.com/popular-items/feed",
+        "https://zenn.dev/feed",
     ],
     "ai": [
-        "https://news.ycombinator.com/rss",
-        "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+        # 研究→実装
+        "https://paperswithcode.com/feed.atom",
+        "https://export.arxiv.org/rss/cs.AI",
+        "https://export.arxiv.org/rss/cs.LG",
+        # AI報道
+        "https://www.technologyreview.com/topic/artificial-intelligence/feed",
         "https://venturebeat.com/category/ai/feed/",
         "https://techcrunch.com/category/artificial-intelligence/feed/",
+        # AI倫理・社会影響
+        "https://www.aisnakeoil.com/feed",
+        "https://www.anthropocenemagazine.org/feed/",
+        # コミュニティ
+        "https://www.reddit.com/r/MachineLearning/.rss",
+        "https://www.reddit.com/r/artificial/.rss",
+        "https://news.ycombinator.com/rss",
+    ],
+    "science": [
+        # 深掘り科学
+        "https://www.sciencedaily.com/rss/all.xml",
+        "https://phys.org/rss-feed/",
+        "https://www.quantamagazine.org/feed/",
+        "https://nautil.us/feed/",
+        "https://www.earth.com/news/feed/",
+        # プレスリリース
+        "https://www.eurekalert.org/rss/news_releases.xml",
+        # 科学報道
+        "https://feeds.arstechnica.com/arstechnica/science",
+        "https://theconversation.com/articles.atom",
+        # コミュニティ
+        "https://www.reddit.com/r/science/.rss",
+        "https://news.ycombinator.com/rss",
     ],
     "education": [
+        # 教育実践
         "https://www.edsurge.com/news.rss",
         "https://edsource.org/feed",
         "https://hechingerreport.org/feed/",
+        "https://blog.khanacademy.org/feed/",
+        # 教育リソース
+        "https://www.openculture.com/feed",
+        "https://news.mit.edu/rss/topic/education",
+        "https://theconversation.com/articles.atom",
+        # 教育トレンド
+        "https://www.reddit.com/r/education/.rss",
+        "https://news.ycombinator.com/rss",
     ],
     "mycotech": [
+        # 生物学研究
         "https://phys.org/rss-feed/biology-news/",
-        "https://news.ycombinator.com/rss",
-        "https://www.anthropocenemagazine.org/feed/",
         "https://www.sciencedaily.com/rss/plants_animals.xml",
+        "https://journals.plos.org/plosbiology/feed/atom",
+        "https://www.earth.com/news/feed/",
+        # 環境×技術
+        "https://www.anthropocenemagazine.org/feed/",
+        "https://grist.org/feed/",
+        "https://therevelator.org/feed/",
+        # テックトレンド
+        "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+        "https://news.ycombinator.com/rss",
+        "https://www.reddit.com/r/biology/.rss",
     ],
     "curiosity": [
+        # 珍奇・深掘り
         "https://www.atlasobscura.com/feeds/latest",
         "https://www.bbc.com/future/rss",
         "https://aeon.co/feed.rss",
+        "https://nautil.us/feed/",
+        "https://www.quantamagazine.org/feed/",
+        # アート×科学
+        "https://www.thisiscolossal.com/feed/",
+        "https://www.creativeapplications.net/feed/",
+        # デザイン・文化
+        "https://www.wired.com/feed/category/design/latest/rss",
         "https://www.smithsonianmag.com/rss/latest_articles/",
+        # トレンド
+        "https://www.producthunt.com/feed",
+        "https://www.reddit.com/r/interestingasfuck/.rss",
     ]
 }
 
@@ -210,21 +334,73 @@ QUESTIONING_KEYWORDS = [
 # SCORING
 # =============================================================================
 
-# ソース格付け
+# ソース信頼度
 SOURCE_WEIGHT = {
-    "nature.com": 5,
-    "science.org": 5,
-    "cell.com": 5,
-    "nytimes.com": 3,
-    "bbc.com": 3,
-    "technologyreview.com": 4,
-    "theverge.com": 2,
-    "sciencedaily.com": 3,
-    "phys.org": 2,
+    # 最高品質（学術・研究）
+    "arxiv.org": 5,
+    "quantamagazine.org": 5,
+    "paperswithcode.com": 5,
+
+    # 高品質科学メディア
+    "sciencedaily.com": 4,
+    "phys.org": 3,
+    "eurekalert.org": 4,
+    "earth.com": 4,
+    "nautil.us": 4,
+
+    # テックメディア（大手）
+    "techcrunch.com": 4,
+    "theverge.com": 3,
+    "wired.com": 4,
+    "arstechnica.com": 4,
+    "technologyreview.com": 5,
+
+    # テックメディア（中堅）
+    "venturebeat.com": 3,
+    "engadget.com": 2,
+    "mashable.com": 2,
+
+    # 中国テック
+    "scmp.com": 3,
+    "kr-asia.com": 3,
+    "technode.com": 3,
+    "pandaily.com": 3,
+
+    # 一般メディア
+    "bbc.com": 4,
+    "smithsonianmag.com": 4,
+
+    # コミュニティ
+    "news.ycombinator.com": 3,
+    "lobste.rs": 4,
+    "reddit.com": 2,
+    "producthunt.com": 2,
+
+    # 開発者プラットフォーム
+    "dev.to": 2,
+    "hashnode.com": 2,
+    "qiita.com": 2,
+    "zenn.dev": 2,
+    "github.com": 3,
+
+    # 文化・教育
+    "aeon.co": 4,
+    "atlasobscura.com": 3,
+    "openculture.com": 3,
+    "edsurge.com": 3,
+    "edsource.org": 3,
+    "hechingerreport.org": 3,
+
+    # 環境
+    "anthropocenemagazine.org": 4,
+    "grist.org": 3,
+    "therevelator.org": 3,
+
+    # デフォルト
     "default": 1
 }
 
-# スコア比率（構造 : 話題性 = 50 : 50）
+# デフォルトのスコア比率（カテゴリ設定で上書きされるため、バックアップとしてのみ使用）
 STRUCTURAL_WEIGHT = 0.5
 TIMELINESS_WEIGHT = 0.5
 
@@ -249,15 +425,12 @@ TAG_SCORES = {
 # OPERATIONAL SETTINGS
 # =============================================================================
 
-# 1日あたりの投稿数（カテゴリごと）
-POSTS_PER_DAY = 2
-
 # 保存期限（日）
 POSTED_RETENTION_DAYS = 7
 PENDING_RETENTION_DAYS = 3
 
 # RSS取得設定
-USER_AGENT = "NewsCurationBot/1.0 (+https://github.com/YOUR_REPO)"
+USER_AGENT = "NewsCurationBot/1.0 (+https://github.com/0xsalome/newsbot)"
 REQUEST_INTERVAL_SECONDS = 1
 MAX_RETRIES = 3
 

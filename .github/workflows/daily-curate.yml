@@ -2,46 +2,47 @@ name: Daily News Curation
 
 on:
   schedule:
-    # 毎日 UTC 0:00 (日本時間 9:00) に実行
-    - cron: '0 0 * * *'
-  workflow_dispatch:  # 手動実行も可能
-
-permissions:
-  contents: write  # state.json を更新するために必要
+    - cron: '0 0 * * *'  # 毎日 00:00 UTC (09:00 JST)
+  workflow_dispatch:      # 手動実行用
 
 jobs:
   curate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # 安全のためタイムアウト設定
+    permissions:
+      contents: write  # state.jsonの更新に必要
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Run curation bot
-        env:
-          DISCORD_WEBHOOK_SCIENCE: ${{ secrets.DISCORD_WEBHOOK_SCIENCE }}
-          DISCORD_WEBHOOK_AI: ${{ secrets.DISCORD_WEBHOOK_AI }}
-          DISCORD_WEBHOOK_EDUCATION: ${{ secrets.DISCORD_WEBHOOK_EDUCATION }}
-          DISCORD_WEBHOOK_MYCOTECH: ${{ secrets.DISCORD_WEBHOOK_MYCOTECH }}
-          DISCORD_WEBHOOK_CURIOSITY: ${{ secrets.DISCORD_WEBHOOK_CURIOSITY }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
-        run: python curate.py
+    - name: Run curation bot
+      env:
+        DISCORD_WEBHOOK_SCIENCE: ${{ secrets.DISCORD_WEBHOOK_SCIENCE }}
+        DISCORD_WEBHOOK_AI: ${{ secrets.DISCORD_WEBHOOK_AI }}
+        DISCORD_WEBHOOK_EDUCATION: ${{ secrets.DISCORD_WEBHOOK_EDUCATION }}
+        DISCORD_WEBHOOK_MYCOTECH: ${{ secrets.DISCORD_WEBHOOK_MYCOTECH }}
+        DISCORD_WEBHOOK_CURIOSITY: ${{ secrets.DISCORD_WEBHOOK_CURIOSITY }}
+        DISCORD_WEBHOOK_BIGTECH: ${{ secrets.DISCORD_WEBHOOK_BIGTECH }}
+        DISCORD_WEBHOOK_DEVCOMMUNITY: ${{ secrets.DISCORD_WEBHOOK_DEVCOMMUNITY }}
+        DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+      run: |
+        python curate.py
 
-      - name: Commit updated state
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add state.json
-          git diff --staged --quiet || git commit -m "Update state.json [skip ci]"
-          git push
-
+    - name: Commit and push state.json
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add state.json
+        # 変更がある場合のみコミット
+        git diff --staged --quiet || git commit -m "Update state.json [skip ci]"
+        git push
