@@ -103,8 +103,6 @@ RSS_SOURCES = {
         "https://www.reddit.com/r/devops/.rss",
         # 開発者ブログ
         "https://dev.to/feed",
-        "https://hashnode.com/rss",
-        "https://daily.dev/blog/feed",
         # 実践知
         "https://www.indiehackers.com/feed",
         "https://increment.com/feed.xml",
@@ -135,9 +133,7 @@ RSS_SOURCES = {
         "https://phys.org/rss-feed/",
         "https://www.quantamagazine.org/feed/",
         "https://nautil.us/feed/",
-        "https://www.earth.com/news/feed/",
-        # プレスリリース
-        "https://www.eurekalert.org/rss/news_releases.xml",
+        "https://www.earth.com/feed/",
         # 科学報道
         "https://feeds.arstechnica.com/arstechnica/science",
         "https://theconversation.com/articles.atom",
@@ -164,7 +160,7 @@ RSS_SOURCES = {
         "https://phys.org/rss-feed/biology-news/",
         "https://www.sciencedaily.com/rss/plants_animals.xml",
         "https://journals.plos.org/plosbiology/feed/atom",
-        "https://www.earth.com/news/feed/",
+        "https://www.earth.com/feed/",
         # 環境×技術
         "https://www.anthropocenemagazine.org/feed/",
         "https://grist.org/feed/",
@@ -175,7 +171,7 @@ RSS_SOURCES = {
     "curiosity": [
         # 珍奇・深掘り
         "https://www.atlasobscura.com/feeds/latest",
-        "https://www.bbc.com/future/rss",
+        "https://www.bbc.com/future/feed.rss",
         "https://aeon.co/feed.rss",
         "https://nautil.us/feed/",
         "https://www.quantamagazine.org/feed/",
