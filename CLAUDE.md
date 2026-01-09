@@ -22,22 +22,22 @@
 
 ## Project Information
 
-- Project purpose: 構造的類似性に基づく自動ニュースキュレーションシステム（バズではなく学び / エンゲージメントではなく構造）
+- Project purpose: Automated news curation system based on structural similarity (learning over buzz / structure over engagement)
 - Technologies used: Python / GitHub Actions / Discord Webhooks / feedparser / requests
 - Main folder structure:
-  - `.github/workflows/` - GitHub Actions設定
-  - `curate.py` - メインスクリプト
-  - `config.py` - RSS/タグ/スコア設定
-  - `state.json` - 状態保存（Git管理）
-  - `requirements.txt` - 依存ライブラリ
+  - `.github/workflows/` - GitHub Actions configuration
+  - `curate.py` - Main script
+  - `config.py` - RSS/tags/scoring configuration
+  - `state.json` - State storage (Git managed)
+  - `requirements.txt` - Dependencies
 - Files/folders not to touch:
-  - `state.json`（ボット自身が管理、手動編集は原則禁止）
+  - `state.json` (managed by bot, manual editing prohibited)
 
 ## Development Commands
 
 ```bash
-python curate.py           # ローカル実行（テスト用）
-python curate.py --dry-run # 投稿せずにスコアリング確認
+python curate.py           # Local execution (for testing)
+python curate.py --dry-run # Check scoring without posting
 ```
 
 ## Environment Variables (GitHub Secrets)
@@ -48,47 +48,55 @@ DISCORD_WEBHOOK_AI
 DISCORD_WEBHOOK_EDUCATION
 DISCORD_WEBHOOK_MYCOTECH
 DISCORD_WEBHOOK_CURIOSITY
-DEEPL_API_KEY          # DeepL API Free（タイトル日本語翻訳用）
+DEEPL_API_KEY          # DeepL API Free (for Japanese title translation)
 ```
 
 ## Implementation Phases
 
 ### Phase 1: MVP
-- RSS取得（1カテゴリのみ）
-- 2タグ判定（transformation, boundary_crossing）
-- 単純スコアリング
-- Discord投稿
-- state.json保存
+- RSS fetching (single category)
+- 2-tag detection (transformation, boundary_crossing)
+- Simple scoring
+- Discord posting
+- state.json persistence
 
-### Phase 2: フル機能
-- 5カテゴリ対応
-- 6タグ完全実装
-- タグ多様性チェック
-- pending/posted管理
+### Phase 2: Full Features
+- 5 categories support
+- Full 6-tag implementation
+- Tag diversity check
+- pending/posted management
 
-### Phase 3: 最適化
-- スコア調整
-- キーワード辞書拡充
-- エラーハンドリング強化
+### Phase 3: Optimization
+- Score tuning
+- Keyword dictionary expansion
+- Error handling improvements
 
 ## Security Guidelines
 
-- Webhookは必ずGitHub Secretsで管理（コードに直書き禁止）
-- state.jsonに機密情報を含めない
-- 外部APIへのリクエストは最小限に
-- User-Agentを適切に設定（ボット識別のため）
-- エラーログに機密情報を出力しない
+- Webhooks must be managed via GitHub Secrets (no hardcoding)
+- No sensitive data in state.json
+- Minimize external API requests
+- Set appropriate User-Agent (for bot identification)
+- No sensitive data in error logs
 
 ## Free Operation Constraints
 
-- **GitHub Actions**: 月2,000分無料枠内で運用（1日5分 × 30日 = 150分）
-- **外部API**: 無料枠のみ使用、有料APIは禁止
-- **LLM**: 使用禁止（コスト発生のため）
-- **ストレージ**: リポジトリ内のstate.jsonのみ使用
-- **依存ライブラリ**: 最小限に抑える（feedparser, requests のみ）
+- **GitHub Actions**: Stay within 2,000 min/month free tier (5 min/day × 30 days = 150 min)
+- **External APIs**: Free tier only, paid APIs prohibited
+- **LLM**: Prohibited (cost reasons)
+- **Storage**: state.json in repository only
+- **Dependencies**: Keep minimal (feedparser, requests only)
+
+## Skills
+
+### Agent Memory
+- Location: `.claude/skills/agent-memory/`
+- Purpose: Persistent memory space for storing knowledge that survives across conversations
+- Usage: Save research findings, codebase patterns, architectural decisions, and in-progress work
+- See `.claude/skills/agent-memory/SKILL.md` for detailed instructions
 
 ## Notes
 
-- 完全無料・全自動・LLMなし
-- RSS礼儀: User-Agent設定、リクエスト間隔1秒以上
-- Discord Rate Limit: 問題なし（10投稿/日）
+- Fully free, fully automated, no LLM
+- RSS etiquette: User-Agent set, 1+ second between requests
+- Discord Rate Limit: No issues (10 posts/day)
