@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -420,26 +421,68 @@ def calculate_timeliness_score(article):
 
 
 # =============================================================================
+# UTILS
+# =============================================================================
+
+def normalize_url(url):
+    """URLを正規化（重複チェック用）"""
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url.strip())
+        # スキームとネットロックを小文字化
+        scheme = parsed.scheme.lower()
+        netloc = parsed.netloc.lower()
+        path = parsed.path
+        # 末尾のスラッシュを除去
+        if path.endswith("/"):
+            path = path[:-1]
+        
+        # クエリパラメータはそのまま（記事IDなどが含まれる場合があるため）
+        # ただし、特定のトラッキングパラメータは削除してもいいかもしれないが、今回はシンプルに
+        
+        return f"{scheme}://{netloc}{path}"
+    except Exception:
+        return url.strip()
+
+
+# =============================================================================
 # SELECTION LOGIC
 # =============================================================================
 
 def select_articles(articles, state, category):
     """カテゴリ設定に基づいて記事を選出"""
-    # 1. すべての候補をURLでユニークにする（複数のRSSフィードからの重複を排除）
+    # 1. すべての候補を正規化URLでユニークにする
     unique_candidates_map = {}
     for a in articles:
-        if a["url"] not in unique_candidates_map:
-            unique_candidates_map[a["url"]] = a
+        norm_url = normalize_url(a["url"])
+        if norm_url not in unique_candidates_map:
+            unique_candidates_map[norm_url] = a
     
-    # 2. 既に投稿済みのURLを除外
-    posted_urls = {entry["url"] for entry in state["posted"].get(category, [])}
-    new_articles = [a for url, a in unique_candidates_map.items() if url not in posted_urls]
+    # 2. 既に投稿済みのURLを除外（正規化して比較）
+    posted_entries = state["posted"].get(category, [])
+    posted_urls = {normalize_url(entry["url"]) for entry in posted_entries}
     
-    # 3. pending記事とマージ（ここでもURL重複を排除）
+    new_articles = []
+    for url, a in unique_candidates_map.items():
+        if url not in posted_urls:
+            new_articles.append(a)
+    
+    # 3. pending記事とマージ
     pending = state["pending"].get(category, [])
-    # すでにnew_articlesにあるものはpendingから除外（最新版を優先）
-    new_urls = {a["url"] for a in new_articles}
-    all_candidates = new_articles + [p for p in pending if p["url"] not in new_urls]
+    # すでにnew_articlesにあるものはpendingから除外
+    new_urls = {normalize_url(a["url"]) for a in new_articles}
+    
+    # pending内の重複も排除
+    unique_pending = []
+    seen_pending_urls = set()
+    for p in pending:
+        p_url = normalize_url(p["url"])
+        if p_url not in new_urls and p_url not in posted_urls and p_url not in seen_pending_urls:
+            unique_pending.append(p)
+            seen_pending_urls.add(p_url)
+
+    all_candidates = new_articles + unique_pending
 
     cat_config = config.CATEGORIES[category]
     mode = cat_config["selection_mode"]
@@ -447,82 +490,142 @@ def select_articles(articles, state, category):
     selected = []
 
     if mode == "trending_only":
-        # 話題性重視のみ (BigTech, DevCommunity)
+        # 話題性重視のみ
         weights = cat_config["weights"]
         for a in all_candidates:
             a["final_score"] = round(calculate_weighted_score(a, weights), 2)
         
         sorted_articles = sorted(all_candidates, key=lambda x: x["final_score"], reverse=True)
-        selected = sorted_articles[:cat_config["posts_per_day"]]
+        # ソース多様性を考慮して選出
+        selected = ensure_source_diversity(sorted_articles, cat_config["posts_per_day"])
 
     elif mode == "dual":
-        # 構造重視1 + 話題重視1 (Science, Education, Mycotech, Curiosity)
+        # 構造重視1 + 話題重視1
         
-        # 1. 構造重視で選出
+        # 1. 構造重視
         weights_struct = cat_config["weights_structural"]
         for a in all_candidates:
             a["temp_score_struct"] = calculate_weighted_score(a, weights_struct)
         
         sorted_struct = sorted(all_candidates, key=lambda x: x["temp_score_struct"], reverse=True)
-        # タグがあるもののみ対象
         struct_candidates = [a for a in sorted_struct if a["tags"]]
+        
         top_structural = struct_candidates[:1]
         
-        # 2. 残りから話題重視で選出
+        # 2. 話題重視
         weights_trend = cat_config["weights_trending"]
-        remaining = [a for a in all_candidates if a not in top_structural]
+        # 重複排除（オブジェクトIDベースだと危険なのでURLベースで）
+        selected_urls = {normalize_url(a["url"]) for a in top_structural}
+        remaining = [a for a in all_candidates if normalize_url(a["url"]) not in selected_urls]
         
         for a in remaining:
             a["temp_score_trend"] = calculate_weighted_score(a, weights_trend)
             
         sorted_trend = sorted(remaining, key=lambda x: x["temp_score_trend"], reverse=True)
-        top_trending = sorted_trend[:1]
+        
+        # ソース重複チェック（構造枠と同じソースばかりにならないように）
+        top_trending = []
+        if sorted_trend:
+            # 構造枠のソースを確認
+            struct_sources = [urlparse(a["url"]).netloc for a in top_structural]
+            
+            # 可能な限り異なるソースを選ぶ
+            for a in sorted_trend:
+                if urlparse(a["url"]).netloc not in struct_sources:
+                    top_trending.append(a)
+                    break
+            
+            # 見つからなければスコア1位を選ぶ
+            if not top_trending and sorted_trend:
+                top_trending.append(sorted_trend[0])
         
         # 統合
         selected = top_structural + top_trending
         
-        # final_scoreを選択された基準に合わせて更新（表示用）
+        # final_score更新
         for a in top_structural:
-            a["final_score"] = round(a["temp_score_struct"], 2)
+            a["final_score"] = round(a.get("temp_score_struct", 0), 2)
         for a in top_trending:
-            a["final_score"] = round(a["temp_score_trend"], 2)
+            a["final_score"] = round(a.get("temp_score_trend", 0), 2)
 
 
     elif mode == "dual_enhanced":
         # 構造重視2 + 話題重視2 (AI)
         
-        # 1. 構造重視で選出
+        # 1. 構造重視
         weights_struct = cat_config["weights_structural"]
         for a in all_candidates:
             a["temp_score_struct"] = calculate_weighted_score(a, weights_struct)
         
         sorted_struct = sorted(all_candidates, key=lambda x: x["temp_score_struct"], reverse=True)
         struct_candidates = [a for a in sorted_struct if a["tags"]]
-        top_structural = struct_candidates[:2]
         
-        # タグ多様性チェック（構造重視枠内）
+        # ソース多様性を確保しつつ2つ選ぶ
+        top_structural = ensure_source_diversity(struct_candidates, 2)
+        
+        # タグ多様性チェック
         top_structural = ensure_tag_diversity(top_structural, struct_candidates)
 
-        # 2. 残りから話題重視で選出
+        # 2. 話題重視
         weights_trend = cat_config["weights_trending"]
-        remaining = [a for a in all_candidates if a not in top_structural]
+        selected_urls = {normalize_url(a["url"]) for a in top_structural}
+        remaining = [a for a in all_candidates if normalize_url(a["url"]) not in selected_urls]
         
         for a in remaining:
             a["temp_score_trend"] = calculate_weighted_score(a, weights_trend)
             
         sorted_trend = sorted(remaining, key=lambda x: x["temp_score_trend"], reverse=True)
-        top_trending = sorted_trend[:2]
         
+        # こちらもソース多様性を確保（全体でのバランスも考慮したいが、まずはこの枠内で）
+        # 構造枠ですでに選ばれたソースは優先度を下げるロジックを入れるとより良い
+        struct_sources = Counter([urlparse(a["url"]).netloc for a in top_structural])
+        
+        top_trending = []
+        for a in sorted_trend:
+            if len(top_trending) >= 2:
+                break
+            
+            domain = urlparse(a["url"]).netloc
+            # 全体で同じドメインは最大2つまで（構造枠ですでに2つなら、話題枠では選ばない）
+            if struct_sources.get(domain, 0) + 1 <= 2: # ここでの+1は今回選ぶ分
+                 top_trending.append(a)
+                 struct_sources[domain] = struct_sources.get(domain, 0) + 1
+        
+        # もし厳しすぎて埋まらなかった場合、制限を緩めて埋める
+        if len(top_trending) < 2:
+            current_trending_urls = {normalize_url(a["url"]) for a in top_trending}
+            remaining_trend = [a for a in sorted_trend if normalize_url(a["url"]) not in current_trending_urls]
+            needed = 2 - len(top_trending)
+            top_trending.extend(remaining_trend[:needed])
+
         # 統合
         selected = top_structural + top_trending
 
         # final_score更新
         for a in top_structural:
-            a["final_score"] = round(a["temp_score_struct"], 2)
+            a["final_score"] = round(a.get("temp_score_struct", 0), 2)
         for a in top_trending:
-            a["final_score"] = round(a["temp_score_trend"], 2)
+            a["final_score"] = round(a.get("temp_score_trend", 0), 2)
 
     return selected
+
+
+def ensure_source_diversity(candidates, limit, max_per_source=2):
+    """同一ソースからの選出を制限して記事を選ぶ"""
+    selected = []
+    source_counts = Counter()
+    
+    for article in candidates:
+        if len(selected) >= limit:
+            break
+            
+        domain = urlparse(article["url"]).netloc
+        if source_counts[domain] < max_per_source:
+            selected.append(article)
+            source_counts[domain] += 1
+            
+    return selected
+
 
 
 def ensure_tag_diversity(current_top, candidates):
