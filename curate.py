@@ -101,9 +101,19 @@ def _is_within_days(date_str, days, now):
 # =============================================================================
 
 def fetch_rss(url):
-    """RSSフィードを取得"""
+    """RSSフィードまたはReddit JSON APIを取得"""
     try:
         headers = {"User-Agent": config.USER_AGENT}
+
+        # Reddit URLの場合はJSON APIを使用
+        if "reddit.com" in url:
+            # .rss を .json に置換（なければそのまま .json 追加）
+            json_url = url.replace(".rss", ".json") if ".rss" in url else url + ".json"
+            response = requests.get(json_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            return {"reddit_json": response.json(), "url": url}
+
+        # 通常のRSS
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         return feedparser.parse(response.content)
@@ -119,11 +129,25 @@ def fetch_all_feeds(category):
 
     for url in sources:
         feed = fetch_rss(url)
-        if feed and feed.entries:
+        if not feed:
+            continue
+
+        # Reddit JSON APIの場合
+        if isinstance(feed, dict) and "reddit_json" in feed:
+            reddit_data = feed["reddit_json"]
+            if reddit_data.get("data", {}).get("children"):
+                for child in reddit_data["data"]["children"]:
+                    post_data = child.get("data", {})
+                    article = parse_reddit_post(post_data, url)
+                    if article:
+                        articles.append(article)
+        # 通常のRSS
+        elif hasattr(feed, 'entries') and feed.entries:
             for entry in feed.entries:
                 article = parse_feed_entry(entry, url)
                 if article:
                     articles.append(article)
+
         time.sleep(config.REQUEST_INTERVAL_SECONDS)
 
     return articles
@@ -143,9 +167,59 @@ def parse_feed_entry(entry, source_url):
             "structural_score": 0,
             "timeliness_score": 0,
             "final_score": 0,
+            # Reddit以外は人気度情報なし
+            "reddit_score": None,
+            "reddit_comments": None,
         }
     except Exception as e:
         print(f"[ERROR] Failed to parse entry: {e}")
+        return None
+
+
+def parse_reddit_post(post_data, source_url):
+    """Reddit投稿を記事オブジェクトに変換"""
+    try:
+        # 人気度フィルター：最低基準を満たさない投稿を除外
+        score = post_data.get("score", 0)
+        num_comments = post_data.get("num_comments", 0)
+
+        # 条件: upvotes < 10 かつ comments < 3 の場合は除外
+        if score < config.REDDIT_MIN_UPVOTES and num_comments < config.REDDIT_MIN_COMMENTS:
+            return None
+
+        # upvote_ratioが低すぎる（賛否が分かれすぎ）投稿も除外
+        upvote_ratio = post_data.get("upvote_ratio", 1.0)
+        if upvote_ratio < config.REDDIT_MIN_UPVOTE_RATIO:
+            return None
+
+        # 投稿時刻をISO形式に変換
+        created_utc = post_data.get("created_utc", 0)
+        published_date = datetime.utcfromtimestamp(created_utc).isoformat() + "Z" if created_utc else ""
+
+        # selftext（本文）またはリンク先URLを取得
+        url = post_data.get("url", "")
+        # Reddit内部リンクの場合は絶対URLに変換
+        if url.startswith("/r/"):
+            url = f"https://www.reddit.com{url}"
+
+        return {
+            "url": url,
+            "title": post_data.get("title", ""),
+            "summary": post_data.get("selftext", "")[:500],  # 本文の最初の500文字
+            "source": "reddit.com",
+            "published": published_date,
+            "fetched_at": datetime.utcnow().isoformat() + "Z",
+            "tags": [],
+            "structural_score": 0,
+            "timeliness_score": 0,
+            "final_score": 0,
+            # Reddit人気度情報
+            "reddit_score": score,
+            "reddit_comments": num_comments,
+            "reddit_upvote_ratio": upvote_ratio,
+        }
+    except Exception as e:
+        print(f"[ERROR] Failed to parse Reddit post: {e}")
         return None
 
 
@@ -387,6 +461,7 @@ def calculate_weighted_score(article, weights):
 
 def calculate_timeliness_score(article):
     """話題性スコアを計算"""
+    import math
     score = 0
 
     # ソース格付け
@@ -416,6 +491,20 @@ def calculate_timeliness_score(article):
                     score += 1
         except Exception:
             pass
+
+    # Reddit人気度スコア（エンゲージメント）
+    reddit_score = article.get("reddit_score")
+    reddit_comments = article.get("reddit_comments")
+
+    if reddit_score is not None and reddit_comments is not None:
+        # 対数スケールでエンゲージメントを評価（大きな数値差を緩和）
+        # log(upvotes + 1) + log(comments + 1) を正規化
+        engagement = math.log(reddit_score + 1) + math.log(reddit_comments + 1)
+        # エンゲージメントスコアを0-5の範囲に正規化
+        # 典型的な人気投稿: upvotes=100, comments=20 → log(101)+log(21) ≈ 4.6+3.0 = 7.6
+        # スコア化: engagement / 2 (最大値を5程度に抑える)
+        engagement_score = min(engagement / 2, 5)
+        score += engagement_score
 
     return score
 
@@ -449,6 +538,26 @@ def normalize_url(url):
 # =============================================================================
 # SELECTION LOGIC
 # =============================================================================
+
+def filter_bigtech_products(articles):
+    """BigTechカテゴリで製品販売情報を除外"""
+    filtered = []
+    for article in articles:
+        text = f"{article.get('title', '')} {article.get('summary', '')}".lower()
+
+        # 除外キーワードをチェック
+        has_product_keyword = False
+        for keyword in config.BIGTECH_PRODUCT_EXCLUDE_KEYWORDS:
+            if keyword.lower() in text:
+                has_product_keyword = True
+                break
+
+        # キーワードが含まれていない記事のみ追加
+        if not has_product_keyword:
+            filtered.append(article)
+
+    return filtered
+
 
 def select_articles(articles, state, category):
     """カテゴリ設定に基づいて記事を選出"""
@@ -484,9 +593,13 @@ def select_articles(articles, state, category):
 
     all_candidates = new_articles + unique_pending
 
+    # BigTechカテゴリ: 製品販売情報を除外
+    if category == "bigtech":
+        all_candidates = filter_bigtech_products(all_candidates)
+
     cat_config = config.CATEGORIES[category]
     mode = cat_config["selection_mode"]
-    
+
     selected = []
 
     if mode == "trending_only":
@@ -494,10 +607,12 @@ def select_articles(articles, state, category):
         weights = cat_config["weights"]
         for a in all_candidates:
             a["final_score"] = round(calculate_weighted_score(a, weights), 2)
-        
+
         sorted_articles = sorted(all_candidates, key=lambda x: x["final_score"], reverse=True)
         # ソース多様性を考慮して選出
-        selected = ensure_source_diversity(sorted_articles, cat_config["posts_per_day"])
+        # BigTechカテゴリは1ソース1記事のみ
+        max_per_source = 1 if category in ["bigtech", "ai"] else 2
+        selected = ensure_source_diversity(sorted_articles, cat_config["posts_per_day"], max_per_source=max_per_source)
 
     elif mode == "dual":
         # 構造重視1 + 話題重視1
@@ -551,52 +666,116 @@ def select_articles(articles, state, category):
 
     elif mode == "dual_enhanced":
         # 構造重視2 + 話題重視2 (AI)
-        
+
+        # Reddit投稿数の上限を取得
+        reddit_max = config.REDDIT_MAX_POSTS.get(category, config.REDDIT_MAX_POSTS["default"])
+        reddit_count = 0
+
         # 1. 構造重視
         weights_struct = cat_config["weights_structural"]
         for a in all_candidates:
             a["temp_score_struct"] = calculate_weighted_score(a, weights_struct)
-        
+
         sorted_struct = sorted(all_candidates, key=lambda x: x["temp_score_struct"], reverse=True)
         struct_candidates = [a for a in sorted_struct if a["tags"]]
-        
-        # ソース多様性を確保しつつ2つ選ぶ
-        top_structural = ensure_source_diversity(struct_candidates, 2)
-        
-        # タグ多様性チェック
-        top_structural = ensure_tag_diversity(top_structural, struct_candidates)
+
+        # ソース多様性を確保しつつ2つ選ぶ（AIカテゴリは1ソース1記事）
+        max_per_source = 1 if category == "ai" else 2
+
+        # Reddit上限を考慮しながら選出
+        top_structural = []
+        source_counts = Counter()
+        for article in struct_candidates:
+            if len(top_structural) >= 2:
+                break
+
+            domain = urlparse(article["url"]).netloc
+            # Reddit投稿はreddit_scoreフィールドで判定（URLではなく）
+            is_reddit = article.get("reddit_score") is not None
+
+            # Reddit上限チェック
+            if is_reddit and reddit_count >= reddit_max:
+                continue
+
+            # ソース多様性チェック
+            if source_counts[domain] < max_per_source:
+                top_structural.append(article)
+                source_counts[domain] += 1
+                if is_reddit:
+                    reddit_count += 1
+
+        # タグ多様性チェック（Reddit制限も考慮）
+        if category == "ai":
+            # Reddit制限を考慮したタグ多様性チェック
+            top_structural = ensure_tag_diversity_with_reddit_limit(
+                top_structural, struct_candidates, reddit_count, reddit_max
+            )
+            # reddit_countを再計算（reddit_scoreフィールドで判定）
+            reddit_count = sum(1 for a in top_structural if a.get("reddit_score") is not None)
+        else:
+            top_structural = ensure_tag_diversity(top_structural, struct_candidates)
 
         # 2. 話題重視
         weights_trend = cat_config["weights_trending"]
         selected_urls = {normalize_url(a["url"]) for a in top_structural}
         remaining = [a for a in all_candidates if normalize_url(a["url"]) not in selected_urls]
-        
+
         for a in remaining:
             a["temp_score_trend"] = calculate_weighted_score(a, weights_trend)
-            
+
         sorted_trend = sorted(remaining, key=lambda x: x["temp_score_trend"], reverse=True)
-        
+
         # こちらもソース多様性を確保（全体でのバランスも考慮したいが、まずはこの枠内で）
         # 構造枠ですでに選ばれたソースは優先度を下げるロジックを入れるとより良い
         struct_sources = Counter([urlparse(a["url"]).netloc for a in top_structural])
-        
+
         top_trending = []
         for a in sorted_trend:
             if len(top_trending) >= 2:
                 break
-            
+
             domain = urlparse(a["url"]).netloc
-            # 全体で同じドメインは最大2つまで（構造枠ですでに2つなら、話題枠では選ばない）
-            if struct_sources.get(domain, 0) + 1 <= 2: # ここでの+1は今回選ぶ分
+            # Reddit投稿はreddit_scoreフィールドで判定
+            is_reddit = a.get("reddit_score") is not None
+
+            # Reddit上限チェック
+            if is_reddit and reddit_count >= reddit_max:
+                continue
+
+            # AIカテゴリは全体で同じドメインは最大1つまで（構造枠ですでに選ばれたソースは除外）
+            max_allowed = 1 if category == "ai" else 2
+            if struct_sources.get(domain, 0) + 1 <= max_allowed: # ここでの+1は今回選ぶ分
                  top_trending.append(a)
                  struct_sources[domain] = struct_sources.get(domain, 0) + 1
+                 if is_reddit:
+                     reddit_count += 1
         
         # もし厳しすぎて埋まらなかった場合、制限を緩めて埋める
         if len(top_trending) < 2:
             current_trending_urls = {normalize_url(a["url"]) for a in top_trending}
             remaining_trend = [a for a in sorted_trend if normalize_url(a["url"]) not in current_trending_urls]
             needed = 2 - len(top_trending)
-            top_trending.extend(remaining_trend[:needed])
+
+            # AIカテゴリの場合は、フォールバック時もソース重複を避ける
+            if category == "ai":
+                for candidate in remaining_trend:
+                    if len(top_trending) >= 2:
+                        break
+                    candidate_domain = urlparse(candidate["url"]).netloc
+                    # Reddit投稿はreddit_scoreフィールドで判定
+                    is_reddit_fallback = candidate.get("reddit_score") is not None
+
+                    # Reddit上限チェック
+                    if is_reddit_fallback and reddit_count >= reddit_max:
+                        continue
+
+                    if struct_sources.get(candidate_domain, 0) == 0:
+                        top_trending.append(candidate)
+                        struct_sources[candidate_domain] = 1
+                        if is_reddit_fallback:
+                            reddit_count += 1
+            else:
+                top_trending.extend(remaining_trend[:needed])
 
         # 統合
         selected = top_structural + top_trending
@@ -635,7 +814,7 @@ def ensure_tag_diversity(current_top, candidates):
 
     top1 = current_top[0]
     top2 = current_top[1]
-    
+
     tags1 = {t["name"] for t in top1.get("tags", [])}
     tags2 = {t["name"] for t in top2.get("tags", [])}
 
@@ -644,6 +823,38 @@ def ensure_tag_diversity(current_top, candidates):
         for article in candidates[2:10]:  # 上位10件まで探索
             article_tags = {t["name"] for t in article.get("tags", [])}
             if article_tags != tags1:
+                return [top1, article]
+
+    return current_top
+
+
+def ensure_tag_diversity_with_reddit_limit(current_top, candidates, current_reddit_count, reddit_max):
+    """タグの多様性を確保（Reddit制限も考慮）"""
+    if len(current_top) < 2:
+        return current_top
+
+    top1 = current_top[0]
+    top2 = current_top[1]
+
+    tags1 = {t["name"] for t in top1.get("tags", [])}
+    tags2 = {t["name"] for t in top2.get("tags", [])}
+
+    # 同じタグセットなら、候補リストの3番目以降から異なるタグを持つものを探す
+    if tags1 == tags2 and len(candidates) > 2:
+        for article in candidates[2:10]:  # 上位10件まで探索
+            article_tags = {t["name"] for t in article.get("tags", [])}
+            if article_tags != tags1:
+                # Reddit制限チェック（reddit_scoreフィールドで判定）
+                is_reddit = article.get("reddit_score") is not None
+                is_top2_reddit = top2.get("reddit_score") is not None
+
+                # top2がRedditで、新しい記事もRedditの場合、Reddit数は変わらない
+                # top2がRedditでなく、新しい記事がRedditの場合、Reddit数が増える
+                if is_reddit and not is_top2_reddit:
+                    # Reddit上限をチェック
+                    if current_reddit_count >= reddit_max:
+                        continue  # この記事はスキップして次を探す
+
                 return [top1, article]
 
     return current_top

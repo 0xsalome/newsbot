@@ -425,5 +425,36 @@ USER_AGENT = "NewsCurationBot/1.0 (+https://github.com/0xsalome/newsbot)"
 REQUEST_INTERVAL_SECONDS = 1
 MAX_RETRIES = 3
 
+# Reddit人気度フィルター
+# 最低基準：upvotes < 10 かつ comments < 3 の投稿は除外
+REDDIT_MIN_UPVOTES = 10
+REDDIT_MIN_COMMENTS = 3
+REDDIT_MIN_UPVOTE_RATIO = 0.6  # 60%未満の賛成率は除外（賛否両論すぎる投稿）
+
+# Reddit投稿の上限（カテゴリごと）
+REDDIT_MAX_POSTS = {
+    "ai": 1,  # AIカテゴリはReddit最大1記事
+    "education": 2,
+    "default": 2  # その他のカテゴリはデフォルト2記事まで
+}
+
+# BigTech: 製品販売情報の除外キーワード
+BIGTECH_PRODUCT_EXCLUDE_KEYWORDS = [
+    # 販売・発売関連
+    "launches", "launch", "unveiled", "unveils", "introduces", "announced", "announces",
+    "available now", "now available", "on sale", "pre-order", "preorder",
+    "coming soon", "releasing", "released",
+    # レビュー・スペック関連
+    "review", "hands-on", "unboxing", "specs", "specifications", "features",
+    "price", "pricing", "costs", "$", "€", "£", "¥",
+    # 製品カテゴリ
+    "drone", "camera", "phone", "smartphone", "tablet", "laptop", "notebook",
+    "watch", "smartwatch", "earbuds", "headphones", "speaker",
+    "tv", "television", "monitor", "display",
+    "car", "vehicle", "ev", "electric vehicle", "suv",
+    "bike", "scooter", "motorcycle",
+    "gadget", "device", "wearable"
+]
+
 # タイムゾーン
 TIMEZONE = "Asia/Tokyo"
