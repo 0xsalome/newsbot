@@ -247,7 +247,12 @@ def translate_to_japanese(text):
         result = response.json()
         return result["translations"][0]["text"]
     except Exception as e:
-        print(f"[WARN] Translation failed: {e}")
+        error_details = str(e)
+        # レスポンス本文があれば詳細を追加（認証エラーや制限超過の理由がわかる）
+        if 'response' in locals() and hasattr(response, 'text') and response.text:
+            error_details += f" | Details: {response.text}"
+        
+        print(f"[WARN] Translation failed ({endpoint}): {error_details}")
         return None
 
 
