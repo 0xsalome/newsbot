@@ -252,7 +252,7 @@ def translate_to_japanese(text):
         if 'response' in locals() and hasattr(response, 'text') and response.text:
             error_details += f" | Details: {response.text}"
         
-        print(f"[WARN] Translation failed ({endpoint}): {error_details}")
+        print(f"[WARN] Translation failed: {error_details}")
         return None
 
 
